@@ -7,7 +7,8 @@ import safetensors.torch
 import torch
 from PIL import Image
 from PIL.PngImagePlugin import PngInfo
-
+from io import TextIOWrapper
+from typing import Any, Dict, List, Union
 
 def load_tensor_file(path):
     if path.lower().endswith(".safetensors"):
@@ -43,8 +44,13 @@ def save_images(images: list, dir_path: str, file_name="image", output_format="J
         path = os.path.join(dir_path, actual_file_name)
         img.save(f"{path}.{output_format.lower()}", quality=output_quality)
 
-
-def save_dicts(entries: list, dir_path: str, file_name="data", output_format="txt", file_format=""):
+def save_dicts(
+    entries: List[Dict[str, Any]],
+    dir_path: str,
+    file_name="data",
+    output_format: Union[str, List[str]]="txt",
+    file_format="",
+):
     """
     * entries: a list of dictionaries
     * dir_path: the directory path where the files will be saved
@@ -59,28 +65,41 @@ def save_dicts(entries: list, dir_path: str, file_name="data", output_format="tx
         return
     os.makedirs(dir_path, exist_ok=True)
 
+    output_format = [output_format.lower()] if output_format is str else [f.lower() for f in output_format]
+    if len(output_format) == 0:
+        return
+
+    def save_text_metadata(metadata: Dict[str, Any], f: TextIOWrapper):
+        for key, val in metadata.items():
+            f.write(f"{key}: {val}\n")
+
+    def save_json_metadata(metadata: Dict[str, Any], f: TextIOWrapper):
+        json.dump(metadata, f, indent=2)
+
+    metadata_file_types = {
+        'json': save_json_metadata, 
+        'txt': save_text_metadata,
+    }
+
     for i, metadata in enumerate(entries):
         actual_file_name = file_name(i) if callable(file_name) else f"{file_name}_{i}"
         path = os.path.join(dir_path, actual_file_name)
 
-        if output_format.lower() == "embed":
-            targetImage = Image.open(f"{path}.{file_format.lower()}")
-            if file_format.lower() == "png":
-                embedded_metadata = PngInfo()
-                for key, val in metadata.items():
-                    embedded_metadata.add_text(key, str(val))
-                targetImage.save(f"{path}.{file_format.lower()}", pnginfo=embedded_metadata)
-            else:
-                user_comment = json.dumps(metadata)
-                exif_dict = {
-                    "Exif": {piexif.ExifIFD.UserComment: piexif.helper.UserComment.dump(user_comment, encoding="unicode")}
-                }
-                exif_bytes = piexif.dump(exif_dict)
-                targetImage.save(f"{path}.{file_format.lower()}", exif=exif_bytes)
-        else:
-            with open(f"{path}.{output_format.lower()}", "w", encoding="utf-8") as f:
-                if output_format.lower() == "txt":
+        for format in output_format:
+            if format == "embed":
+                targetImage = Image.open(f"{path}.{file_format.lower()}")
+                if file_format.lower() == "png":
+                    embedded_metadata = PngInfo()
                     for key, val in metadata.items():
-                        f.write(f"{key}: {val}\n")
-                elif output_format.lower() == "json":
-                    json.dump(metadata, f, indent=2)
+                        embedded_metadata.add_text(key, str(val))
+                    targetImage.save(f"{path}.{file_format.lower()}", pnginfo=embedded_metadata)
+                else:
+                    user_comment = json.dumps(metadata)
+                    exif_dict = {
+                        "Exif": {piexif.ExifIFD.UserComment: piexif.helper.UserComment.dump(user_comment, encoding="unicode")}
+                    }
+                    exif_bytes = piexif.dump(exif_dict)
+                    targetImage.save(f"{path}.{file_format.lower()}", exif=exif_bytes)
+            elif format in metadata_file_types:
+                with open(f"{path}.{format}", "w", encoding="utf-8") as f:
+                    metadata_file_types[format](metadata, f)
